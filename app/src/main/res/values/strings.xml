@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">NAFI TV 24</string>
+    <string name="google_app_id" translatable="false">1:862181890531:android:nafitv24app</string>
+    <string name="gcm_defaultSenderId" translatable="false">862181890531</string>
+</resources>

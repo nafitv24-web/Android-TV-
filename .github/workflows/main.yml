@@ -1,0 +1,134 @@
+name: Build & Release NAFI TV 24 (APK & Windows EXE)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Set up Swap Space
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 10
+
+      - name: Grant Execute Permission for Gradlew
+        run: chmod +x gradlew || true
+
+      - name: Verify and Restore Source Integrity
+        run: |
+          python3 -c "
+          import os, zlib
+          path = 'app/src/main/java/com/example/ui/NafiTvMainApp.kt'
+          if os.path.exists(path):
+              with open(path, 'rb') as f:
+                  raw = f.read()
+              z_start = raw.find(b'x\x9c')
+              if z_start != -1:
+                  print('Detected compressed chunk in repo at index:', z_start)
+                  first_part = raw[:z_start].decode('utf-8', errors='ignore')
+                  second_part = zlib.decompress(raw[z_start:]).decode('utf-8', errors='ignore')
+                  full_code = first_part + second_part
+                  with open(path, 'w', encoding='utf-8') as f:
+                      f.write(full_code)
+                  print('Source integrity successfully auto-restored! Total lines:', len(full_code.splitlines()))
+              else:
+                  print('Source code is intact.')
+          "
+
+      - name: Setup Environment File
+        run: |
+          if [ -f ".env.example" ] && [ ! -f ".env" ]; then
+            cp .env.example .env
+          elif [ ! -f ".env" ]; then
+            touch .env
+          fi
+
+      - name: Restore or Generate Debug Keystore
+        run: |
+          if [ -f "debug.keystore.base64" ]; then
+            base64 -d debug.keystore.base64 > debug.keystore || true
+          fi
+          if [ ! -s "debug.keystore" ]; then
+            rm -f debug.keystore
+            keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      - name: Accept Android SDK Licenses & Setup Platforms
+        run: |
+          yes | sdkmanager --licenses 2>/dev/null || true
+          sdkmanager "platforms;android-36" || true
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.3.1
+
+      - name: Build APK with Gradle
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Collect and Prepare Mobile APK
+        run: |
+          mkdir -p final-apk
+          if [ -f "app/build/outputs/apk/debug/app-debug.apk" ]; then
+            cp -v app/build/outputs/apk/debug/app-debug.apk final-apk/NAFI-TV-24-Mobile-App.apk
+          else
+            find . -name "*.apk" -not -path "*/.gradle/*" -exec cp -v {} final-apk/NAFI-TV-24-Mobile-App.apk \;
+          fi
+          echo "Ready APK files:"
+          ls -lh final-apk/
+
+      - name: Upload Mobile APK as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NAFI-TV-24-Mobile-Android-APK
+          path: final-apk/*.apk
+          retention-days: 30
+          if-no-files-found: error
+
+  build-windows:
+    name: Build Windows PC (.exe)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Build Windows Executable (.exe)
+        run: |
+          ./gradlew -p desktop packageExe --stacktrace
+
+      - name: Upload Windows .exe as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NAFI-TV-24-Windows-PC-Installer-EXE
+          path: desktop/build/compose/binaries/main/exe/*
+          retention-days: 30
+

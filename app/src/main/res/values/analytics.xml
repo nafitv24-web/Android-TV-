@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Explicitly disable Firebase Analytics / Measurement auto-collection to prevent Missing google_app_id error -->
+    <bool name="firebase_analytics_collection_deactivated">true</bool>
+    <bool name="firebase_analytics_collection_enabled">false</bool>
+    <bool name="google_analytics_adid_collection_enabled">false</bool>
+</resources>

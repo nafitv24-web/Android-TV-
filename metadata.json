@@ -1,0 +1,8 @@
+{
+  "name": "Android TV",
+  "description": "লাইভ টিভি এবং স্পোর্টস স্ট্রিমিং অ্যাপ - Live TV & Sports streaming with built-in HLS/ExoPlayer and external player support",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

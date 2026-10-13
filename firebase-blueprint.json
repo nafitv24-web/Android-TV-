@@ -1,0 +1,69 @@
+{
+  "entities": {
+    "MarqueeNews": {
+      "title": "MarqueeNews",
+      "description": "Breaking news ticker data",
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "marquee_ticker": { "type": "string" },
+        "updated_at": { "type": "number" }
+      }
+    },
+    "AppConfig": {
+      "title": "AppConfig",
+      "description": "Global application configuration settings",
+      "type": "object",
+      "properties": {
+        "latestVersion": { "type": "string" },
+        "updateUrl": { "type": "string" },
+        "forceUpdate": { "type": "boolean" },
+        "releaseNotes": { "type": "string" }
+      }
+    },
+    "NotificationItem": {
+      "title": "NotificationItem",
+      "description": "Push and in-app notifications",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "timestamp": { "type": "number" }
+      }
+    },
+    "PlaylistItem": {
+      "title": "PlaylistItem",
+      "description": "Custom user or system playlist definition",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "url": { "type": "string" },
+        "type": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/settings/marquee_news": {
+      "schema": "MarqueeNews",
+      "description": "Current marquee ticker announcement"
+    },
+    "/app_config/marquee_ticker": {
+      "schema": "MarqueeNews",
+      "description": "Alternate marquee news document"
+    },
+    "/settings/app_config": {
+      "schema": "AppConfig",
+      "description": "Global app updates and configuration"
+    },
+    "/notifications/{id}": {
+      "schema": "NotificationItem",
+      "description": "Broadcast notifications"
+    },
+    "/playlists/{id}": {
+      "schema": "PlaylistItem",
+      "description": "Playlists collection"
+    }
+  }
+}
