@@ -70,6 +70,40 @@ jobs:
             keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
           fi
 
+      - name: Ensure google-services.json Exists
+        run: |
+          if [ ! -f "app/google-services.json" ]; then
+            echo "Generating fallback app/google-services.json..."
+            mkdir -p app
+            cat << 'EOF' > app/google-services.json
+          {
+            "project_info": {
+              "project_number": "69630054093",
+              "project_id": "gen-lang-client-0255825339",
+              "storage_bucket": "gen-lang-client-0255825339.firebasestorage.app"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:69630054093:android:b3a56640cb215399216384",
+                  "android_client_info": {
+                    "package_name": "com.aistudio.nafitv.vkrlgg"
+                  }
+                },
+                "oauth_client": [],
+                "api_key": [
+                  {
+                    "current_key": "AIzaSyDq6zYiTJHDqYxH_2PV-RsKWPFj_8eSpy0"
+                  }
+                ],
+                "services": {}
+              }
+            ],
+            "configuration_version": "1"
+          }
+          EOF
+          fi
+
       - name: Accept Android SDK Licenses & Setup Platforms
         run: |
           yes | sdkmanager --licenses 2>/dev/null || true
