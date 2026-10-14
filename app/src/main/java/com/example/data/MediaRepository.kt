@@ -113,6 +113,12 @@ class MediaRepository(private val context: Context) {
         private var cachedBuiltinLiveTv: List<MediaItem>? = null
         @Volatile
         private var inMemoryLiveTvCache: List<MediaItem>? = null
+        @Volatile
+        private var cachedHiddenIds: Set<String>? = null
+        @Volatile
+        private var cachedHiddenKeywords: Set<String>? = null
+        @Volatile
+        private var cachedAdultContentHidden: Boolean? = null
     }
 
     fun getMarqueeTickerText(): String {
@@ -548,23 +554,18 @@ class MediaRepository(private val context: Context) {
     }
 
     fun isDemoChannel(item: MediaItem): Boolean {
-        val id = item.id.lowercase()
-        val title = item.title.lowercase()
-        val cat = item.category.lowercase()
-        val url = item.streamUrl.lowercase()
-        val allUrls = (item.servers.map { it.url.lowercase() } + listOf(url)).joinToString(" ")
-
-        return id.startsWith("demo_") ||
-                id.contains("demo_sample") ||
-                title.contains("demo channel") ||
-                title.contains("ডেমো চ্যানেল") ||
-                title.contains("test stream") ||
-                title.contains("পরীক্ষামূলক টেস্ট") ||
-                allUrls.contains("test-streams.mux.dev") ||
-                allUrls.contains("akamaized.net/hls/live/2000341/test") ||
-                allUrls.contains("bitdash-a.akamaihd.net") ||
-                allUrls.contains("bipbop") ||
-                allUrls.contains("bigbuckbunny")
+        val id = item.id
+        if (id.startsWith("demo_", ignoreCase = true) || id.contains("demo_sample", ignoreCase = true)) return true
+        val title = item.title
+        if (title.contains("demo channel", ignoreCase = true) || title.contains("ডেমো চ্যানেল", ignoreCase = true) || title.contains("test stream", ignoreCase = true) || title.contains("পরীক্ষামূলক টেস্ট", ignoreCase = true)) return true
+        val url = item.streamUrl
+        if (url.contains("test-streams.mux.dev", ignoreCase = true) || url.contains("bipbop", ignoreCase = true) || url.contains("bigbuckbunny", ignoreCase = true) || url.contains("bitdash-a.akamaihd.net", ignoreCase = true) || url.contains("akamaized.net/hls/live/2000341/test", ignoreCase = true)) return true
+        val srvs = item.servers
+        for (i in 0 until srvs.size) {
+            val sUrl = srvs[i].url
+            if (sUrl.contains("test-streams.mux.dev", ignoreCase = true) || sUrl.contains("bipbop", ignoreCase = true) || sUrl.contains("bigbuckbunny", ignoreCase = true) || sUrl.contains("bitdash-a.akamaihd.net", ignoreCase = true) || sUrl.contains("akamaized.net/hls/live/2000341/test", ignoreCase = true)) return true
+        }
+        return false
     }
 
     fun getCachedMoviesList(): List<MediaItem> {
@@ -822,6 +823,21 @@ class MediaRepository(private val context: Context) {
 
         inMemoryLiveTvCache = result
         return result
+    }
+
+    fun warmUpInitialCaches() {
+        if (inMemoryLiveTvCache == null) {
+            getInitialLiveTv()
+        }
+        if (cachedAdultContentHidden == null) {
+            isAdultContentHidden()
+        }
+        if (cachedHiddenIds == null) {
+            getHiddenItemIds()
+        }
+        if (cachedHiddenKeywords == null) {
+            getHiddenKeywords()
+        }
     }
 
     fun getInitialMoviesSeries(): List<MediaItem> {
@@ -1138,29 +1154,31 @@ class MediaRepository(private val context: Context) {
                 // 2. Check if root object has a specific category_name (e.g., { "category_name": "HINDI MOVIES", "movies": [...] })
                 val rootCatName = rootObj.optString("category_name", rootObj.optString("category", rootObj.optString("cat_name", ""))).trim()
 
-                // 3. Check for standard collection keys
-                val collectionKeys = listOf(
-                    "matches", "events", "match_list", "live_matches", "live_events",
-                    "movies", "movie_list", "series", "tv_series", "channels", "streams",
-                    "items", "data", "results", "list", "content", "videos", "playlist", "feed"
-                )
-                for (key in collectionKeys) {
-                    val arr = rootObj.optJSONArray(key)
-                    if (arr != null) {
-                        val inferredCat = if (rootCatName.isNotBlank()) {
-                            rootCatName
-                        } else if (key.contains("match", ignoreCase = true) || key.contains("event", ignoreCase = true)) {
-                            "Sports Live"
-                        } else if (key.contains("series", ignoreCase = true)) {
-                            "Web Series"
-                        } else {
-                            defaultCategory
-                        }
-                        for (i in 0 until arr.length()) {
-                            val itemObj = arr.optJSONObject(i)
-                            if (itemObj != null) {
-                                val parsed = parseSingleMediaFromJson(itemObj, items.size, inferredCat, defaultType = defaultType)
-                                if (parsed != null) items.add(parsed)
+                // 3. Check for standard collection keys if not already loaded from categories
+                if (categoriesArr == null) {
+                    val collectionKeys = listOf(
+                        "matches", "events", "match_list", "live_matches", "live_events",
+                        "movies", "movie_list", "series", "tv_series", "channels", "streams",
+                        "items", "data", "results", "list", "content", "videos", "playlist", "feed"
+                    )
+                    for (key in collectionKeys) {
+                        val arr = rootObj.optJSONArray(key)
+                        if (arr != null) {
+                            val inferredCat = if (rootCatName.isNotBlank()) {
+                                rootCatName
+                            } else if (key.contains("match", ignoreCase = true) || key.contains("event", ignoreCase = true)) {
+                                "Sports Live"
+                            } else if (key.contains("series", ignoreCase = true)) {
+                                "Web Series"
+                            } else {
+                                defaultCategory
+                            }
+                            for (i in 0 until arr.length()) {
+                                val itemObj = arr.optJSONObject(i)
+                                if (itemObj != null) {
+                                    val parsed = parseSingleMediaFromJson(itemObj, items.size, inferredCat, defaultType = defaultType)
+                                    if (parsed != null) items.add(parsed)
+                                }
                             }
                         }
                     }
@@ -7862,41 +7880,59 @@ class MediaRepository(private val context: Context) {
     // Default is TRUE (hidden automatically by default)
     // -------------------------------------------------------------
     fun isAdultContentHidden(): Boolean {
-        return prefs.getBoolean("hide_adult_content", true)
+        val cached = cachedAdultContentHidden
+        if (cached != null) return cached
+        val v = prefs.getBoolean("hide_adult_content", true)
+        cachedAdultContentHidden = v
+        return v
     }
 
     fun setHideAdultContent(hidden: Boolean) {
+        cachedAdultContentHidden = hidden
         prefs.edit().putBoolean("hide_adult_content", hidden).apply()
     }
 
     fun getHiddenKeywords(): Set<String> {
+        val cached = cachedHiddenKeywords
+        if (cached != null) return cached
         val stored = prefs.getStringSet("admin_hidden_keywords", null)
-        if (!stored.isNullOrEmpty()) {
-            return stored
+        val res = if (!stored.isNullOrEmpty()) {
+            stored
+        } else {
+            val legacy = prefs.getString("hidden_keywords", null)
+            if (!legacy.isNullOrBlank()) {
+                legacy.split(",").map { it.trim() }.filter { it.isNotBlank() }.toSet()
+            } else {
+                setOf(
+                    "adult", "adults", "18+", "18 +", "xxx", "nsfw", "erotic", "erotica", "porn", "sex", "sensual",
+                    "mature", "ullu", "kooku", "primeshots", "rabbit", "besharams", "hotx", "chikoo",
+                    "boomx", "cinemadosti", "cinema dosti", "redprime", "gupchup", "hunt", "feneo",
+                    "fliz", "voovi", "feelit", "unrated hot", "softcore", "nuefliks", "hotshots"
+                )
+            }
         }
-        val legacy = prefs.getString("hidden_keywords", null)
-        if (!legacy.isNullOrBlank()) {
-            return legacy.split(",").map { it.trim() }.filter { it.isNotBlank() }.toSet()
-        }
-        return setOf(
-            "adult", "adults", "18+", "18 +", "xxx", "nsfw", "erotic", "erotica", "porn", "sex", "sensual",
-            "mature", "ullu", "kooku", "primeshots", "rabbit", "besharams", "hotx", "chikoo",
-            "boomx", "cinemadosti", "cinema dosti", "redprime", "gupchup", "hunt", "feneo",
-            "fliz", "voovi", "feelit", "unrated hot", "softcore", "nuefliks", "hotshots"
-        )
+        cachedHiddenKeywords = res
+        return res
     }
 
     fun setHiddenKeywords(keywords: Collection<String>) {
-        prefs.edit().putStringSet("admin_hidden_keywords", keywords.toSet()).apply()
+        val set = keywords.toSet()
+        cachedHiddenKeywords = set
+        prefs.edit().putStringSet("admin_hidden_keywords", set).apply()
     }
 
     fun getHiddenItemIds(): Set<String> {
-        return prefs.getStringSet("admin_hidden_media_ids", emptySet()) ?: emptySet()
+        val cached = cachedHiddenIds
+        if (cached != null) return cached
+        val res = prefs.getStringSet("admin_hidden_media_ids", emptySet()) ?: emptySet()
+        cachedHiddenIds = res
+        return res
     }
 
     fun hideMultipleItems(ids: Collection<String>) {
         val current = getHiddenItemIds().toMutableSet()
         current.addAll(ids)
+        cachedHiddenIds = current
         prefs.edit().putStringSet("admin_hidden_media_ids", current).apply()
     }
 
@@ -7909,11 +7945,13 @@ class MediaRepository(private val context: Context) {
             current.add(id)
             true
         }
+        cachedHiddenIds = current
         prefs.edit().putStringSet("admin_hidden_media_ids", current).apply()
         return isNowHidden
     }
 
     fun unhideAllItems() {
+        cachedHiddenIds = emptySet()
         prefs.edit().remove("admin_hidden_media_ids").apply()
     }
 

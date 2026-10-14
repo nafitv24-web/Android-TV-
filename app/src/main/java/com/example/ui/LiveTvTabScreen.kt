@@ -44,39 +44,14 @@ private val SERVER_CLEAN_REGEX = Regex("^(?i)(server|সার্ভার)\\s*\
 
 fun mergeChannelsWithServers(channels: List<MediaItem>): List<MediaItem> {
     if (channels.isEmpty()) return emptyList()
-    val nonDemo = channels.filterNot { item ->
-        val id = item.id.lowercase()
-        val title = item.title.lowercase()
-        val cat = item.category.lowercase()
-        val url = item.streamUrl.lowercase()
-        val allUrls = (item.servers.map { it.url.lowercase() } + listOf(url)).joinToString(" ")
-
-        id.startsWith("demo_") ||
-                id.contains("demo_sample") ||
-                title.contains("demo channel") ||
-                title.contains("ডেমো চ্যানেল") ||
-                title.contains("test stream") ||
-                title.contains("পরীক্ষামূলক টেস্ট") ||
-                allUrls.contains("test-streams.mux.dev") ||
-                allUrls.contains("akamaized.net/hls/live/2000341/test") ||
-                allUrls.contains("bitdash-a.akamaihd.net") ||
-                allUrls.contains("bipbop") ||
-                allUrls.contains("bigbuckbunny")
-    }
-    // User requirement: "লাইভ টিভি অপশনে সকল চ্যানেল আসবে এক নামে দুটি চ্যানেল থাকলেও"
-    // Keep all channels intact even with identical names, guaranteeing unique IDs for Compose rendering
-    val seenIds = HashSet<String>()
-    return nonDemo.mapIndexed { index, item ->
-        val safeServers = item.getAllServers()
+    val seenIds = HashSet<String>(channels.size)
+    return channels.mapIndexed { index, item ->
         var uniqueId = item.id.ifBlank { "ch_${index}_${Math.abs(item.title.hashCode())}" }
         if (seenIds.contains(uniqueId)) {
             uniqueId = "${uniqueId}_${index}"
         }
         seenIds.add(uniqueId)
-        item.copy(
-            id = uniqueId,
-            servers = safeServers
-        )
+        if (uniqueId == item.id) item else item.copy(id = uniqueId)
     }
 }
 
@@ -103,11 +78,9 @@ fun LiveTvTabScreen(
         if (channels.isEmpty()) return@remember emptyList()
         val merged = mergeChannelsWithServers(channels)
         val shouldFilterAdult = isAdultHidden || (repository?.isAdultContentHidden() == true)
-        if (shouldFilterAdult) {
-            val adultWords = setOf("adult", "adults", "18+", "18 +", "xxx", "nsfw", "erotic", "porn", "sex", "sensual", "mature", "brazzers", "playboy", "hustler", "for adults")
+        if (shouldFilterAdult && repository != null) {
             merged.filterNot { ch ->
-                val txt = "${ch.title} ${ch.category ?: ""} ${ch.genre ?: ""}".lowercase()
-                adultWords.any { txt.contains(it) } || (repository?.isMediaHidden(ch) == true) || (repository?.isAdultMedia(ch) == true)
+                repository.isAdultCategory(ch.category) || repository.isAdultMedia(ch) || repository.isMediaHidden(ch)
             }
         } else {
             merged
@@ -115,7 +88,16 @@ fun LiveTvTabScreen(
     }
 
     val categories = remember(preparedChannels) {
-        listOf("ALL", "FAVORITE") + preparedChannels.mapNotNull { it.category?.takeIf { c -> c.isNotBlank() } }.distinct()
+        val catSet = LinkedHashSet<String>()
+        catSet.add("ALL")
+        catSet.add("FAVORITE")
+        for (i in 0 until preparedChannels.size) {
+            val cat = preparedChannels[i].category
+            if (!cat.isNullOrBlank()) {
+                catSet.add(cat)
+            }
+        }
+        catSet.toList()
     }
 
     // Trigger non-blocking background health check on unverified channels ONLY if user turned on showOnlyActive filter
@@ -144,14 +126,17 @@ fun LiveTvTabScreen(
             preparedChannels
         } else {
             val query = searchQuery.trim().lowercase()
+            val hasQuery = query.isNotEmpty()
+            val isFavorite = selectedCategory == "FAVORITE"
+            val isAll = selectedCategory == "ALL"
             preparedChannels.filter { channel ->
-                val matchesSearch = query.isEmpty() || channel.title.lowercase().contains(query)
-                val matchesCategory = when (selectedCategory) {
-                    "ALL" -> true
-                    "FAVORITE" -> favoriteIds.contains(channel.id)
+                val matchesSearch = !hasQuery || channel.title.contains(query, ignoreCase = true)
+                val matchesCategory = when {
+                    isAll -> true
+                    isFavorite -> favoriteIds.contains(channel.id)
                     else -> channel.category.equals(selectedCategory, ignoreCase = true)
                 }
-                val matchesActive = if (showOnlyActive) ChannelStatusManager.isChannelActive(channel) else true
+                val matchesActive = !showOnlyActive || ChannelStatusManager.isChannelActive(channel)
                 matchesSearch && matchesCategory && matchesActive
             }
         }

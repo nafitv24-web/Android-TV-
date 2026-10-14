@@ -37,11 +37,15 @@ class NafiTvApp : Application(), ImageLoaderFactory {
             com.example.util.SportsInteractionManager.init(this)
         } catch (_: Exception) {}
 
+        try {
+            com.example.util.ChannelStatusManager.init(this)
+        } catch (_: Exception) {}
+
         // Pre-warm local file caches on Dispatchers.IO to guarantee 0ms UI startup
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             try {
                 val repo = com.example.data.MediaRepository(this@NafiTvApp)
-                repo.getInitialLiveTv()
+                repo.warmUpInitialCaches()
                 repo.getCachedSportsMatches()
             } catch (_: Exception) {}
         }

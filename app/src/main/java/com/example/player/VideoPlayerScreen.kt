@@ -1048,7 +1048,7 @@ fun VideoPlayerScreen(
                 eventListener: androidx.media3.exoplayer.audio.AudioRendererEventListener,
                 out: java.util.ArrayList<androidx.media3.exoplayer.Renderer>
             ) {
-                // 1. Hardware/Platform MediaCodec Audio Renderer with decoder fallback
+                // High-performance hardware-accelerated MediaCodec Audio Renderer with decoder fallback
                 out.add(
                     androidx.media3.exoplayer.audio.MediaCodecAudioRenderer(
                         context,
@@ -1059,21 +1059,6 @@ fun VideoPlayerScreen(
                         audioSink
                     )
                 )
-
-                // 2. FFmpeg Audio Renderer for MP2, MP1, AC3, EAC3, TrueHD, DTS, Opus, Vorbis, FLAC, ALAC, etc.
-                try {
-                    if (androidx.media3.decoder.ffmpeg.FfmpegLibrary.isAvailable()) {
-                        out.add(
-                            androidx.media3.decoder.ffmpeg.FfmpegAudioRenderer(
-                                eventHandler,
-                                eventListener,
-                                audioSink
-                            )
-                        )
-                    }
-                } catch (t: Throwable) {
-                    android.util.Log.w("VideoPlayer", "FFmpeg audio renderer init fallback", t)
-                }
             }
 
             override fun buildVideoRenderers(
@@ -1087,7 +1072,7 @@ fun VideoPlayerScreen(
                 out: java.util.ArrayList<androidx.media3.exoplayer.Renderer>
             ) {
                 // Delegate to super to ensure DefaultMediaCodecAdapterFactory (asynchronous MediaCodec)
-                // is properly configured and software extension renderers are registered,
+                // is properly configured and hardware decoders are fully utilized,
                 // while guaranteeing 15 seconds video joining tolerance and enabling decoder fallback.
                 super.buildVideoRenderers(
                     context,
@@ -1101,7 +1086,7 @@ fun VideoPlayerScreen(
                 )
             }
         }.apply {
-            setExtensionRendererMode(androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+            setExtensionRendererMode(androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
             setEnableDecoderFallback(true)
             setEnableAudioFloatOutput(false)
             setEnableAudioTrackPlaybackParams(true)
