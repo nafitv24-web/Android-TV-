@@ -159,15 +159,20 @@ object ChannelStatusManager {
 
         val primaryUrl = mainUrl.ifBlank { allServers.firstOrNull()?.url.orEmpty() }.trim()
         if (!isValidStreamFormat(primaryUrl)) {
+            workingStatusMap[channel.id] = false
             return false
         }
 
         // Check if all servers in the channel are already marked broken
         if (allServers.isNotEmpty()) {
             val hasValidServer = allServers.any { isValidStreamFormat(it.url) && !failedServerUrls.contains(it.url.trim()) }
-            if (!hasValidServer) return false
+            if (!hasValidServer) {
+                workingStatusMap[channel.id] = false
+                return false
+            }
         }
 
+        workingStatusMap[channel.id] = true
         return true
     }
 

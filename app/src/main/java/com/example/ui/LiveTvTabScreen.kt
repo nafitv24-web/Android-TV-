@@ -96,48 +96,26 @@ fun LiveTvTabScreen(
     var selectedCategory by remember { mutableStateOf("ALL") }
     var showOnlyActive by rememberSaveable { mutableStateOf(false) }
 
-    val statusTick by ChannelStatusManager.statusUpdateTick.collectAsState()
-    val coroutineScope = rememberCoroutineScope()
     val firstChannelFocusRequester = remember { FocusRequester() }
 
-    // Instantaneous 0ms channel preparation from incoming channels
-    var isAsyncPreparing by remember { mutableStateOf(false) }
-    var preparedChannels by remember { mutableStateOf(channels) }
-    var preparedCategories by remember {
-        mutableStateOf(
-            listOf("ALL", "FAVORITE") + channels.mapNotNull { it.category?.takeIf { c -> c.isNotBlank() } }.distinct()
-        )
+    // Instantaneous 0ms channel preparation synchronously from incoming channels
+    val preparedChannels = remember(channels, isAdultHidden) {
+        if (channels.isEmpty()) return@remember emptyList()
+        val merged = mergeChannelsWithServers(channels)
+        val shouldFilterAdult = isAdultHidden || (repository?.isAdultContentHidden() == true)
+        if (shouldFilterAdult) {
+            val adultWords = setOf("adult", "adults", "18+", "18 +", "xxx", "nsfw", "erotic", "porn", "sex", "sensual", "mature", "brazzers", "playboy", "hustler", "for adults")
+            merged.filterNot { ch ->
+                val txt = "${ch.title} ${ch.category ?: ""} ${ch.genre ?: ""}".lowercase()
+                adultWords.any { txt.contains(it) } || (repository?.isMediaHidden(ch) == true) || (repository?.isAdultMedia(ch) == true)
+            }
+        } else {
+            merged
+        }
     }
 
-    LaunchedEffect(channels, isAdultHidden, repository) {
-        if (channels.isEmpty()) {
-            preparedChannels = emptyList()
-            preparedCategories = listOf("ALL")
-            isAsyncPreparing = false
-            return@LaunchedEffect
-        }
-        withContext(Dispatchers.Default) {
-            val merged = mergeChannelsWithServers(channels)
-            val shouldFilterAdult = isAdultHidden || (repository?.isAdultContentHidden() == true)
-            val adultFiltered = if (shouldFilterAdult && repository != null) {
-                merged.filterNot { repository.isMediaHidden(it) || repository.isAdultMedia(it) || repository.isAdultCategory(it.category) }
-            } else if (shouldFilterAdult) {
-                val adultWords = listOf("adult", "adults", "18+", "18 +", "xxx", "nsfw", "erotic", "porn", "sex", "sensual", "mature", "brazzers", "playboy", "hustler", "for adults")
-                merged.filterNot { ch ->
-                    val txt = "${ch.title} ${ch.category} ${ch.genre ?: ""}".lowercase()
-                    adultWords.any { txt.contains(it) }
-                }
-            } else {
-                merged
-            }
-            val cats = listOf("ALL", "FAVORITE") + adultFiltered.mapNotNull { it.category?.takeIf { c -> c.isNotBlank() } }.distinct()
-
-            withContext(Dispatchers.Main) {
-                preparedChannels = adultFiltered
-                preparedCategories = cats
-                isAsyncPreparing = false
-            }
-        }
+    val categories = remember(preparedChannels) {
+        listOf("ALL", "FAVORITE") + preparedChannels.mapNotNull { it.category?.takeIf { c -> c.isNotBlank() } }.distinct()
     }
 
     // Trigger non-blocking background health check on unverified channels ONLY if user turned on showOnlyActive filter
@@ -151,48 +129,39 @@ fun LiveTvTabScreen(
         ChannelStatusManager.setOnlyActiveEnabled(showOnlyActive)
     }
 
-    // Auto-focus first channel in TV mode so D-Pad lands on the channel list instead of stealing focus to Search field
+    // Auto-focus first channel in TV mode so D-Pad lands on the channel list
     LaunchedEffect(isTvMode, preparedChannels.isNotEmpty()) {
         if (isTvMode && preparedChannels.isNotEmpty()) {
-            delay(180)
+            delay(150)
             try {
                 firstChannelFocusRequester.requestFocus()
             } catch (_: Exception) {}
         }
     }
 
-    val categories = preparedCategories
-
-    val filteredChannels = remember(preparedChannels, searchQuery, selectedCategory, favoriteIds, showOnlyActive, if (showOnlyActive) statusTick else 0L) {
-        preparedChannels.filter { channel ->
-            val matchesSearch = searchQuery.isBlank() || channel.title.contains(searchQuery, ignoreCase = true)
-            val matchesCategory = when (selectedCategory) {
-                "ALL" -> true
-                "FAVORITE" -> favoriteIds.contains(channel.id)
-                else -> channel.category.equals(selectedCategory, ignoreCase = true)
+    val filteredChannels = remember(preparedChannels, searchQuery, selectedCategory, favoriteIds, showOnlyActive) {
+        if (searchQuery.isBlank() && selectedCategory == "ALL" && !showOnlyActive) {
+            preparedChannels
+        } else {
+            val query = searchQuery.trim().lowercase()
+            preparedChannels.filter { channel ->
+                val matchesSearch = query.isEmpty() || channel.title.lowercase().contains(query)
+                val matchesCategory = when (selectedCategory) {
+                    "ALL" -> true
+                    "FAVORITE" -> favoriteIds.contains(channel.id)
+                    else -> channel.category.equals(selectedCategory, ignoreCase = true)
+                }
+                val matchesActive = if (showOnlyActive) ChannelStatusManager.isChannelActive(channel) else true
+                matchesSearch && matchesCategory && matchesActive
             }
-            val matchesActive = if (showOnlyActive) ChannelStatusManager.isChannelActive(channel) else true
-            matchesSearch && matchesCategory && matchesActive
         }
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .padding(horizontal = 14.dp, vertical = 6.dp)
     ) {
-        if (isLoading && preparedChannels.isNotEmpty()) {
-            LinearProgressIndicator(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(2.5.dp)
-                    .clip(RoundedCornerShape(2.dp)),
-                color = Color(0xFF00E5FF),
-                trackColor = Color(0xFF1E293B)
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-        }
-
         // Search and Filter Header
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -248,7 +217,7 @@ fun LiveTvTabScreen(
                             .background(if (showOnlyActive) Color(0xFF10B981) else Color(0xFF64748B))
                     )
                     Text(
-                        text = "Only Active Channel",
+                        text = "সচল চ্যানেল",
                         color = if (showOnlyActive) Color(0xFF34D399) else Color(0xFFCBD5E1),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
@@ -268,17 +237,17 @@ fun LiveTvTabScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         // Categories Row
         LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
             items(categories) { cat ->
                 val isSelected = selectedCategory == cat
                 val label = when (cat) {
-                    "ALL" -> if (isLoading && channels.isEmpty()) "সকল চ্যানেল (লোড হচ্ছে...)" else "সকল চ্যানেল (${channels.size})"
+                    "ALL" -> "সকল চ্যানেল (${preparedChannels.size})"
                     "FAVORITE" -> "⭐ প্রিয় (${favoriteIds.size})"
                     else -> cat
                 }
@@ -302,13 +271,13 @@ fun LiveTvTabScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
-        // Channels Grid or Loading View
-        if ((isLoading || isAsyncPreparing) && preparedChannels.isEmpty()) {
+        // Channels Grid
+        if (preparedChannels.isEmpty()) {
             NafiLogoLoadingView(
-                title = "লাইভ টিভি চ্যানেল লোড হচ্ছে...",
-                subtitle = "অনুগ্রহ করে অপেক্ষা করুন, টিভি চ্যানেল ও সার্ভার প্রস্তুত হচ্ছে...",
+                title = "লাইভ টিভি চ্যানেল প্রস্তুত হচ্ছে...",
+                subtitle = "সকল টিভি চ্যানেল সাজানো হচ্ছে...",
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
@@ -328,177 +297,154 @@ fun LiveTvTabScreen(
             }
         } else {
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 130.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                columns = GridCells.Adaptive(minSize = if (isTvMode) 140.dp else 115.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.weight(1f)
             ) {
-                itemsIndexed(filteredChannels, key = { _, it -> it.id }) { index, channel ->
+                items(
+                    items = filteredChannels,
+                    key = { it.id }
+                ) { channel ->
                     val isFav = favoriteIds.contains(channel.id)
-                    var isFocused by remember { mutableStateOf(false) }
-                    val isActive = ChannelStatusManager.isChannelActive(channel)
+                    val isFirst = isTvMode && channel.id == filteredChannels.firstOrNull()?.id
 
-                    val baseModifier = if (isTvMode) {
-                        Modifier
-                            .fillMaxWidth()
-                            .height(140.dp)
-                            .then(if (index == 0) Modifier.focusRequester(firstChannelFocusRequester) else Modifier)
-                            .onFocusChanged { isFocused = it.isFocused }
-                            .focusable()
-                            .clickable { onSelectMedia(channel, filteredChannels) }
-                    } else {
-                        Modifier
-                            .fillMaxWidth()
-                            .height(140.dp)
-                            .clickable { onSelectMedia(channel, filteredChannels) }
-                    }
-                    val cardModifier = if (!isActive) {
-                        baseModifier.alpha(0.72f)
-                    } else {
-                        baseModifier
-                    }
+                    ChannelItemCard(
+                        channel = channel,
+                        isTvMode = isTvMode,
+                        isFav = isFav,
+                        focusRequester = if (isFirst) firstChannelFocusRequester else null,
+                        onSelect = { onSelectMedia(channel, filteredChannels) },
+                        onToggleFavorite = { onToggleFavorite(channel.id) }
+                    )
+                }
+            }
+        }
+    }
+}
 
-                    Card(
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
-                        border = BorderStroke(
-                            1.dp,
-                            when {
-                                isTvMode && isFocused -> Color(0xFF00E5FF)
-                                isActive -> Color(0xFF10B981).copy(alpha = 0.45f)
-                                else -> Color(0xFFEF4444).copy(alpha = 0.45f)
-                            }
-                        ),
-                        modifier = cardModifier
+@Composable
+private fun ChannelItemCard(
+    channel: MediaItem,
+    isTvMode: Boolean,
+    isFav: Boolean,
+    focusRequester: FocusRequester? = null,
+    onSelect: () -> Unit,
+    onToggleFavorite: () -> Unit
+) {
+    var isFocused by remember { mutableStateOf(false) }
+    val isActive = remember(channel.id) { ChannelStatusManager.isChannelActive(channel) }
+
+    val baseModifier = Modifier
+        .fillMaxWidth()
+        .height(132.dp)
+        .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+        .then(if (isTvMode) Modifier.onFocusChanged { isFocused = it.isFocused }.focusable() else Modifier)
+        .clickable(onClick = onSelect)
+
+    val cardBorder = when {
+        isTvMode && isFocused -> BorderStroke(2.dp, Color(0xFF00E5FF))
+        isActive -> BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.35f))
+        else -> BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.35f))
+    }
+
+    Card(
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = if (isTvMode && isFocused) Color(0xFF1E3A8A).copy(alpha = 0.7f) else Color(0xFF1E293B)),
+        border = cardBorder,
+        modifier = if (!isActive) baseModifier.alpha(0.75f) else baseModifier
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 6.dp, vertical = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                if (!channel.logoUrl.isNullOrBlank()) {
+                    AsyncImage(
+                        model = channel.logoUrl,
+                        contentDescription = channel.title,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF0F172A)),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Box(modifier = Modifier.fillMaxSize()) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(8.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                if (!channel.logoUrl.isNullOrBlank()) {
-                                    val context = LocalContext.current
-                                    AsyncImage(
-                                        model = coil.request.ImageRequest.Builder(context)
-                                            .data(channel.logoUrl)
-                                            .crossfade(false)
-                                            .size(128, 128)
-                                            .build(),
-                                        contentDescription = channel.title,
-                                        contentScale = ContentScale.Fit,
-                                        modifier = Modifier
-                                            .size(54.dp)
-                                            .clip(RoundedCornerShape(8.dp))
-                                    )
-                                } else {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(54.dp)
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(Color(0xFF0F172A)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(Icons.Rounded.LiveTv, contentDescription = null, tint = Color(0xFF00E5FF), modifier = Modifier.size(28.dp))
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                Text(
-                                    text = channel.title,
-                                    color = Color.White,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-
-                                if (!channel.category.isNullOrBlank()) {
-                                    Text(
-                                        text = channel.category!!,
-                                        color = Color(0xFF94A3B8),
-                                        fontSize = 10.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-
-                            // Top-Start Corner: Active green indicator / Offline red indicator
-                            if (isActive) {
-                                Surface(
-                                    shape = RoundedCornerShape(topStart = 12.dp, bottomEnd = 8.dp),
-                                    color = Color(0xFF064E3B).copy(alpha = 0.95f),
-                                    border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.8f)),
-                                    modifier = Modifier.align(Alignment.TopStart)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(6.dp)
-                                                .clip(CircleShape)
-                                                .background(Color(0xFF10B981))
-                                        )
-                                        Text(
-                                            text = "সচল",
-                                            color = Color(0xFF6EE7B7),
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                }
-                            } else {
-                                Surface(
-                                    shape = RoundedCornerShape(topStart = 12.dp, bottomEnd = 8.dp),
-                                    color = Color(0xFF450A0A).copy(alpha = 0.95f),
-                                    border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.6f)),
-                                    modifier = Modifier.align(Alignment.TopStart)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(6.dp)
-                                                .clip(CircleShape)
-                                                .background(Color(0xFFEF4444))
-                                        )
-                                        Text(
-                                            text = "অফলাইন",
-                                            color = Color(0xFFFCA5A5),
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                }
-                            }
-
-                            // Favorite Icon Button
-                            IconButton(
-                                onClick = { onToggleFavorite(channel.id) },
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .size(32.dp)
-                            ) {
-                                Icon(
-                                    imageVector = if (isFav) Icons.Rounded.Star else Icons.Rounded.StarBorder,
-                                    contentDescription = "Favorite",
-                                    tint = if (isFav) Color(0xFFF59E0B) else Color(0xFF64748B),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        }
+                        Icon(Icons.Rounded.LiveTv, contentDescription = null, tint = Color(0xFF00E5FF), modifier = Modifier.size(26.dp))
                     }
                 }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Text(
+                    text = channel.title,
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                if (!channel.category.isNullOrBlank()) {
+                    Text(
+                        text = channel.category!!,
+                        color = Color(0xFF94A3B8),
+                        fontSize = 10.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            // Top-Start Corner: Sleek status badge
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .clip(RoundedCornerShape(topStart = 12.dp, bottomEnd = 8.dp))
+                    .background(if (isActive) Color(0xD9064E3B) else Color(0xD9450A0A))
+                    .padding(horizontal = 5.dp, vertical = 2.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(5.dp)
+                            .clip(CircleShape)
+                            .background(if (isActive) Color(0xFF10B981) else Color(0xFFEF4444))
+                    )
+                    Text(
+                        text = if (isActive) "সচল" else "অফলাইন",
+                        color = if (isActive) Color(0xFF6EE7B7) else Color(0xFFFCA5A5),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            // Favorite Icon Button
+            IconButton(
+                onClick = onToggleFavorite,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .size(30.dp)
+            ) {
+                Icon(
+                    imageVector = if (isFav) Icons.Rounded.Star else Icons.Rounded.StarBorder,
+                    contentDescription = "Favorite",
+                    tint = if (isFav) Color(0xFFF59E0B) else Color(0xFF64748B),
+                    modifier = Modifier.size(16.dp)
+                )
             }
         }
     }

@@ -157,8 +157,7 @@ fun NafiTvMainApp(
     val initialSavedMode = remember {
         when (repository.getSavedUserMode()) {
             "REMOTE" -> AppUserMode.REMOTE
-            "MOBILE" -> AppUserMode.MOBILE
-            else -> null
+            else -> AppUserMode.MOBILE
         }
     }
     var activeUserMode by remember { mutableStateOf<AppUserMode?>(initialSavedMode) }
@@ -279,12 +278,13 @@ fun NafiTvMainApp(
         }
     }
 
-    // Auto-fetch data: Sequential Staged Loading (1. Live TV -> 2. Live Events -> 3. Movies -> 4. Playlists & Cloud)
-    fun refreshAllData() {
+    // Auto-fetch data: Silent background sync or manual user refresh
+    fun refreshAllData(isManual: Boolean = false) {
         coroutineScope.launch(Dispatchers.IO) {
-            withContext(Dispatchers.Main) {
-                isRefreshing = true
-                currentLoadingStage = LoadingStage.LIVE_TV
+            if (isManual) {
+                withContext(Dispatchers.Main) {
+                    isRefreshing = true
+                }
             }
             try {
                 val deleted = repository.getDeletedIds()
@@ -483,9 +483,9 @@ fun NafiTvMainApp(
     }
 
     LaunchedEffect(Unit) {
-        // Yield 350ms so Compose renders the immediate cached UI at full 60fps without any startup freeze
-        delay(350)
-        refreshAllData()
+        // Instant startup: UI displays all channels immediately in 0ms; sync runs silently in background
+        delay(1200)
+        refreshAllData(isManual = false)
     }
 
     val handleAddCustomMedia: (MediaItem) -> Unit = { item ->
@@ -899,7 +899,7 @@ fun NafiTvMainApp(
                                         .scale(refreshScale)
                                         .onFocusChanged { isRefreshFocused = it.isFocused }
                                         .focusable()
-                                        .clickable { refreshAllData() }
+                                        .clickable { refreshAllData(isManual = true) }
                                 ) {
                                     Box(modifier = Modifier.padding(7.dp)) {
                                         if (isRefreshing) {
@@ -918,47 +918,6 @@ fun NafiTvMainApp(
                                         }
                                     }
                                 }
-                            }
-                        }
-                    }
-
-                    // Phased Sequential Loading Indicator Banner (TV Mode)
-                    androidx.compose.animation.AnimatedVisibility(
-                        visible = isRefreshing && currentLoadingStage != LoadingStage.IDLE,
-                        enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.expandVertically(),
-                        exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.shrinkVertically()
-                    ) {
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 3.dp),
-                            shape = RoundedCornerShape(10.dp),
-                            color = Color(0xFF0F172A),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.5f))
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(14.dp),
-                                    color = Color(0xFF00E5FF),
-                                    strokeWidth = 2.dp
-                                )
-                                Text(
-                                    text = currentLoadingStage.title,
-                                    color = Color(0xFF38BDF8),
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Text(
-                                    text = "ধাপ ${currentLoadingStage.step}/4",
-                                    color = Color(0xFF10B981),
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
                             }
                         }
                     }
@@ -1269,7 +1228,7 @@ fun NafiTvMainApp(
                                 Surface(
                                     shape = CircleShape,
                                     color = Color(0xFF1E293B),
-                                    modifier = Modifier.clickable { refreshAllData() }
+                                    modifier = Modifier.clickable { refreshAllData(isManual = true) }
                                 ) {
                                     Box(modifier = Modifier.padding(8.dp)) {
                                         if (isRefreshing) {
@@ -1288,47 +1247,6 @@ fun NafiTvMainApp(
                                         }
                                     }
                                 }
-                            }
-                        }
-                    }
-
-                    // Phased Sequential Loading Indicator Banner (Mobile Mode)
-                    androidx.compose.animation.AnimatedVisibility(
-                        visible = isRefreshing && currentLoadingStage != LoadingStage.IDLE,
-                        enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.expandVertically(),
-                        exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.shrinkVertically()
-                    ) {
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 2.dp),
-                            shape = RoundedCornerShape(10.dp),
-                            color = Color(0xFF0F172A),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.5f))
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(13.dp),
-                                    color = Color(0xFF00E5FF),
-                                    strokeWidth = 2.dp
-                                )
-                                Text(
-                                    text = currentLoadingStage.title,
-                                    color = Color(0xFF38BDF8),
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Text(
-                                    text = "ধাপ ${currentLoadingStage.step}/4",
-                                    color = Color(0xFF10B981),
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
                             }
                         }
                     }

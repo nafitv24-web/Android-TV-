@@ -108,6 +108,11 @@ class MediaRepository(private val context: Context) {
         const val FIREBASE_PROJECT_ID = "gen-lang-client-0255825339"
         const val FIREBASE_API_KEY = "AIzaSyDq6zYiTJHDqYxH_2PV-RsKWPFj_8eSpy0"
         const val FIRESTORE_DATABASE_ID = "ai-studio-android-androidt-c367ea18-0409-44f0-a714-5c64d7d9b272"
+
+        @Volatile
+        private var cachedBuiltinLiveTv: List<MediaItem>? = null
+        @Volatile
+        private var inMemoryLiveTvCache: List<MediaItem>? = null
     }
 
     fun getMarqueeTickerText(): String {
@@ -526,12 +531,18 @@ class MediaRepository(private val context: Context) {
     }
 
     fun getCachedLiveTvChannels(): List<MediaItem> {
+        val inMem = inMemoryLiveTvCache
+        if (inMem != null && inMem.isNotEmpty()) return inMem
         val list = loadListFromFileCache("cache_livetv_v3.json").filterNot { isDemoChannel(it) }
-        if (list.isNotEmpty()) return list
+        if (list.isNotEmpty()) {
+            inMemoryLiveTvCache = list
+            return list
+        }
         val oldList = loadListFromFileCache("cache_livetv_v2.json").filterNot { isDemoChannel(it) }
         if (oldList.isNotEmpty()) {
             saveCachedLiveTvChannels(oldList)
             try { java.io.File(context.filesDir, "cache_livetv_v2.json").delete() } catch (_: Exception) {}
+            inMemoryLiveTvCache = oldList
         }
         return oldList
     }
@@ -571,7 +582,9 @@ class MediaRepository(private val context: Context) {
     }
 
     fun saveCachedLiveTvChannels(list: List<MediaItem>) {
-        saveListToFileCache("cache_livetv_v3.json", list.filterNot { isDemoChannel(it) })
+        val clean = list.filterNot { isDemoChannel(it) }
+        inMemoryLiveTvCache = clean
+        saveListToFileCache("cache_livetv_v3.json", clean)
     }
 
     fun saveCachedMoviesList(list: List<MediaItem>) {
@@ -584,6 +597,22 @@ class MediaRepository(private val context: Context) {
     }
 
     fun getDefaultBuiltinLiveTv(): List<MediaItem> {
+        val cached = cachedBuiltinLiveTv
+        if (cached != null && cached.isNotEmpty()) {
+            return cached
+        }
+        val assetChannels = try {
+            val jsonString = context.assets.open("channels.json").bufferedReader().use { it.readText() }
+            parseMediaFromJsonString(jsonString, defaultCategory = "BANGLADESH", defaultType = MediaType.LIVE_TV).map {
+                it.copy(type = MediaType.LIVE_TV, isLive = true)
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+        if (assetChannels.isNotEmpty()) {
+            cachedBuiltinLiveTv = assetChannels
+            return assetChannels
+        }
         return listOf(
             MediaItem(
                 id = "tv_builtin_nagorik",
@@ -769,6 +798,10 @@ class MediaRepository(private val context: Context) {
     }
 
     fun getInitialLiveTv(): List<MediaItem> {
+        val inMem = inMemoryLiveTvCache
+        if (inMem != null && inMem.isNotEmpty()) {
+            return inMem
+        }
         val customTv = getCustomStreams().filter { it.type == MediaType.LIVE_TV }.filterNot { isItemDeleted(it) || isDemoChannel(it) }
         val cached = getCachedLiveTvChannels().filterNot { isItemDeleted(it) || isDemoChannel(it) }
         val baseList = if (cached.isNotEmpty()) cached else getDefaultBuiltinLiveTv()
@@ -778,7 +811,7 @@ class MediaRepository(private val context: Context) {
         combined.addAll(baseList)
 
         val seen = HashSet<String>()
-        return combined.mapIndexed { idx, ch ->
+        val result = combined.mapIndexed { idx, ch ->
             var uid = ch.id.ifBlank { "tv_${idx}_${Math.abs(ch.title.hashCode())}" }
             if (seen.contains(uid)) {
                 uid = "${uid}_$idx"
@@ -786,6 +819,9 @@ class MediaRepository(private val context: Context) {
             seen.add(uid)
             ch.copy(id = uid)
         }.filterNot { isItemDeleted(it) || isDemoChannel(it) }
+
+        inMemoryLiveTvCache = result
+        return result
     }
 
     fun getInitialMoviesSeries(): List<MediaItem> {
@@ -3704,7 +3740,7 @@ class MediaRepository(private val context: Context) {
     suspend fun fetchAllXtreamLiveChannels(): List<MediaItem> = withContext(Dispatchers.IO) {
         val accounts = getActiveXtreamAccounts().filter { it.includeLive }
         if (accounts.isEmpty()) {
-            return@withContext fetchXtreamLiveStreamsOnly("http://rgkkw.live:80", "4dfoydR2gZ", "clever3still")
+            return@withContext emptyList()
         }
         val allItems = mutableListOf<MediaItem>()
         coroutineScope {

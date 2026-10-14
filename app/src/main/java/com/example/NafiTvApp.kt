@@ -41,9 +41,8 @@ class NafiTvApp : Application(), ImageLoaderFactory {
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             try {
                 val repo = com.example.data.MediaRepository(this@NafiTvApp)
-                repo.getCachedLiveTvChannels()
+                repo.getInitialLiveTv()
                 repo.getCachedSportsMatches()
-                repo.getCachedMoviesList()
             } catch (_: Exception) {}
         }
 
