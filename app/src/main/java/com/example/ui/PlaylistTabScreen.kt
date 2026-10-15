@@ -120,6 +120,10 @@ fun PlaylistTabScreen(
         if (pl != null) {
             val shouldFilterAdult = isAdultHidden || repository.isAdultContentHidden()
             val cached = repository.getCachedPlaylistChannels(pl.id)
+            channelSearchQuery = ""
+            selectedPlaylistTypeFilter = "ALL"
+            selectedPlaylistCategory = "All"
+
             if (cached.isNotEmpty()) {
                 playlistChannels = if (shouldFilterAdult) {
                     cached.filterNot { repository.isDemoChannel(it) || repository.isMediaHidden(it) || repository.isAdultMedia(it) || repository.isAdultCategory(it.category) }
@@ -129,24 +133,19 @@ fun PlaylistTabScreen(
                 isLoadingChannels = false
             } else {
                 isLoadingChannels = true
-            }
-            channelSearchQuery = ""
-            selectedPlaylistTypeFilter = "ALL"
-            selectedPlaylistCategory = "All"
-            try {
-                val fetched = repository.fetchPlaylistChannels(pl)
-                val filtered = if (shouldFilterAdult) {
-                    fetched.filterNot { repository.isDemoChannel(it) || repository.isMediaHidden(it) || repository.isAdultMedia(it) || repository.isAdultCategory(it.category) }
-                } else {
-                    fetched.filterNot { repository.isDemoChannel(it) }
-                }
-                if (filtered.isNotEmpty() || playlistChannels.isEmpty()) {
+                try {
+                    val fetched = repository.fetchPlaylistChannels(pl, forceRefresh = false)
+                    val filtered = if (shouldFilterAdult) {
+                        fetched.filterNot { repository.isDemoChannel(it) || repository.isMediaHidden(it) || repository.isAdultMedia(it) || repository.isAdultCategory(it.category) }
+                    } else {
+                        fetched.filterNot { repository.isDemoChannel(it) }
+                    }
                     playlistChannels = filtered
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                } finally {
+                    isLoadingChannels = false
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            } finally {
-                isLoadingChannels = false
             }
         }
     }
@@ -420,7 +419,13 @@ fun PlaylistTabScreen(
                         scope.launch {
                             isLoadingChannels = true
                             try {
-                                playlistChannels = repository.fetchPlaylistChannels(currentPl)
+                                val shouldFilterAdult = isAdultHidden || repository.isAdultContentHidden()
+                                val fresh = repository.fetchPlaylistChannels(currentPl, forceRefresh = true)
+                                playlistChannels = if (shouldFilterAdult) {
+                                    fresh.filterNot { repository.isDemoChannel(it) || repository.isMediaHidden(it) || repository.isAdultMedia(it) || repository.isAdultCategory(it.category) }
+                                } else {
+                                    fresh.filterNot { repository.isDemoChannel(it) }
+                                }
                             } catch (e: Exception) {
                                 e.printStackTrace()
                             } finally {
@@ -702,7 +707,7 @@ fun PlaylistTabScreen(
                 ) {
                     items(filteredChannels, key = { it.id }) { item ->
                         var isCardFocused by remember { mutableStateOf(false) }
-                        val isActive = ChannelStatusManager.isChannelActive(item)
+                        val isActive = remember(item.id) { ChannelStatusManager.isChannelActive(item) }
                         val isMovieOrSeriesItem = item.isSeries || item.type == com.example.model.MediaType.MOVIE || item.type == com.example.model.MediaType.SERIES
 
                         val handleItemClick = {

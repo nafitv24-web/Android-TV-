@@ -347,10 +347,10 @@ fun NafiTvMainApp(
                             }
 
                             if (updatedTv.isNotEmpty()) {
+                                repository.saveCachedLiveTvChannels(updatedTv)
                                 withContext(Dispatchers.Main) {
                                     liveTvList = updatedTv
                                 }
-                                repository.saveCachedLiveTvChannels(liveTvList)
                             }
                         } catch (e: Exception) {
                             e.printStackTrace()
@@ -394,19 +394,18 @@ fun NafiTvMainApp(
                                 val fbTv = fbItems.filter { it.type == MediaType.LIVE_TV }
                                 val fbMov = fbItems.filter { it.type == MediaType.MOVIE || it.type == MediaType.SERIES }
 
+                                val updatedSports = if (fbSports.isNotEmpty()) (fbSports + sportsList).distinctBy { it.id }.filterNot { repository.isItemDeleted(it) } else null
+                                val updatedTv = if (fbTv.isNotEmpty()) (liveTvList + fbTv).distinctBy { it.id }.filterNot { deleted.contains(it.id) } else null
+                                val updatedMov = if (fbMov.isNotEmpty()) (moviesList + fbMov).distinctBy { it.id }.filterNot { deleted.contains(it.id) }.sortedByDescending { it.movieSortWeight } else null
+
+                                updatedSports?.let { repository.saveCachedSportsMatches(it) }
+                                updatedTv?.let { repository.saveCachedLiveTvChannels(it) }
+                                updatedMov?.let { repository.saveCachedMoviesList(it) }
+
                                 withContext(Dispatchers.Main) {
-                                    if (fbSports.isNotEmpty()) {
-                                        sportsList = (fbSports + sportsList).distinctBy { it.id }.filterNot { repository.isItemDeleted(it) }
-                                        repository.saveCachedSportsMatches(sportsList)
-                                    }
-                                    if (fbTv.isNotEmpty()) {
-                                        liveTvList = (liveTvList + fbTv).distinctBy { it.id }.filterNot { deleted.contains(it.id) }
-                                        repository.saveCachedLiveTvChannels(liveTvList)
-                                    }
-                                    if (fbMov.isNotEmpty()) {
-                                        moviesList = (moviesList + fbMov).distinctBy { it.id }.filterNot { deleted.contains(it.id) }.sortedByDescending { it.movieSortWeight }
-                                        repository.saveCachedMoviesList(moviesList)
-                                    }
+                                    if (updatedSports != null) sportsList = updatedSports
+                                    if (updatedTv != null) liveTvList = updatedTv
+                                    if (updatedMov != null) moviesList = updatedMov
                                 }
                             } catch (_: Exception) {}
                         } catch (e: Exception) {
@@ -1654,18 +1653,32 @@ fun MenuScreen(
     // 2. Load Custom M3U State
     var remoteM3uUrl by remember { mutableStateOf("") }
     var isLoadingM3u by remember { mutableStateOf(false) }
+    var isUploadingM3uFile by remember { mutableStateOf(false) }
 
-    // File picker launcher for .m3u / .m3u8
+    // File picker launcher for .m3u / .m3u8 (Runs asynchronously on background IO thread)
     val m3uFileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
-        uri?.let {
-            val parsed = repository.parseM3uFromUri(it)
-            if (parsed.isNotEmpty()) {
-                onM3uLoaded(parsed)
-                Toast.makeText(context, "${parsed.size} টি চ্যানেল ফাইল থেকে লোড হয়েছে!", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(context, "প্লেলিস্ট ফাইলটি পড়া যায়নি!", Toast.LENGTH_SHORT).show()
+        uri?.let { fileUri ->
+            isUploadingM3uFile = true
+            coroutineScope.launch(Dispatchers.IO) {
+                try {
+                    val parsed = repository.parseM3uFromUri(fileUri)
+                    withContext(Dispatchers.Main) {
+                        isUploadingM3uFile = false
+                        if (parsed.isNotEmpty()) {
+                            onM3uLoaded(parsed)
+                            Toast.makeText(context, "${parsed.size} টি চ্যানেল ফাইল থেকে লোড হয়েছে!", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(context, "প্লেলিস্ট ফাইলটিতে কোনো চ্যানেল পাওয়া যায়নি!", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        isUploadingM3uFile = false
+                        Toast.makeText(context, "প্লেলিস্ট ফাইলটি পড়া যায়নি!", Toast.LENGTH_SHORT).show()
+                    }
+                }
             }
         }
     }
@@ -2109,7 +2122,7 @@ fun MenuScreen(
 
                     // Upload .m3u / .m3u8 File from Device button
                     OutlinedButton(
-                        onClick = { m3uFileLauncher.launch("*/*") },
+                        onClick = { if (!isUploadingM3uFile) m3uFileLauncher.launch("*/*") },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(48.dp),
@@ -2117,17 +2130,23 @@ fun MenuScreen(
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00E5FF)),
                         border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF334155))
                     ) {
-                        Icon(
-                            imageVector = Icons.Rounded.FileUpload,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Upload .m3u / .m3u8 File from Device",
-                            fontWeight = FontWeight.Medium,
-                            fontSize = 13.sp
-                        )
+                        if (isUploadingM3uFile) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color(0xFF00E5FF), strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("ফাইল প্রসেস করা হচ্ছে...", fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                        } else {
+                            Icon(
+                                imageVector = Icons.Rounded.FileUpload,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Upload .m3u / .m3u8 File from Device",
+                                fontWeight = FontWeight.Medium,
+                                fontSize = 13.sp
+                            )
+                        }
                     }
                 }
             }

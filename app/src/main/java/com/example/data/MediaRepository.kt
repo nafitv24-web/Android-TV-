@@ -991,12 +991,16 @@ class MediaRepository(private val context: Context) {
         } catch (_: Exception) {}
     }
 
-    // M3U parser from Uri
+    // M3U parser from Uri with memory-safe buffered streaming
     fun parseM3uFromUri(uri: Uri): List<MediaItem> {
         return try {
             val inputStream = context.contentResolver.openInputStream(uri) ?: return emptyList()
-            val reader = BufferedReader(InputStreamReader(inputStream))
-            val lines = reader.readLines()
+            val reader = BufferedReader(InputStreamReader(inputStream), 32 * 1024)
+            val lines = mutableListOf<String>()
+            var line: String?
+            while (reader.readLine().also { line = it } != null) {
+                line?.let { lines.add(it) }
+            }
             reader.close()
             parseM3uLines(lines)
         } catch (e: Exception) {
@@ -3858,45 +3862,52 @@ class MediaRepository(private val context: Context) {
         }
     }
 
-    suspend fun fetchPlaylistChannels(playlist: PlaylistInfo): List<MediaItem> = withContext(Dispatchers.IO) {
+    suspend fun fetchPlaylistChannels(playlist: PlaylistInfo, forceRefresh: Boolean = false): List<MediaItem> = withContext(Dispatchers.IO) {
         val cached = getCachedPlaylistChannels(playlist.id)
-
-        if (!playlist.serverUrl.isNullOrBlank() && !playlist.username.isNullOrBlank() && !playlist.password.isNullOrBlank()) {
-            val xtreamItems = fetchXtreamCodesStreams(playlist.serverUrl, playlist.username, playlist.password)
-            if (xtreamItems.isNotEmpty()) {
-                saveCachedPlaylistChannels(playlist.id, xtreamItems)
-                return@withContext xtreamItems
-            }
-            val liveItems = fetchXtreamLiveStreamsOnly(playlist.serverUrl, playlist.username, playlist.password)
-            if (liveItems.isNotEmpty()) {
-                saveCachedPlaylistChannels(playlist.id, liveItems)
-                return@withContext liveItems
-            }
-        }
-        if (playlist.url.isNotBlank()) {
-            val creds = parseXtreamCredentials(playlist.url)
-            if (creds != null) {
-                val xtreamFallback = fetchXtreamCodesStreams(creds.first, creds.second, creds.third)
-                if (xtreamFallback.isNotEmpty()) {
-                    saveCachedPlaylistChannels(playlist.id, xtreamFallback)
-                    return@withContext xtreamFallback
-                }
-                val liveFallback = fetchXtreamLiveStreamsOnly(creds.first, creds.second, creds.third)
-                if (liveFallback.isNotEmpty()) {
-                    saveCachedPlaylistChannels(playlist.id, liveFallback)
-                    return@withContext liveFallback
-                }
-            }
-            val m3uItems = parseM3uFromUrl(playlist.url)
-            if (m3uItems.isNotEmpty()) {
-                saveCachedPlaylistChannels(playlist.id, m3uItems)
-                return@withContext m3uItems
-            }
-        }
-        if (cached.isNotEmpty()) {
+        if (!forceRefresh && cached.isNotEmpty()) {
             return@withContext cached
         }
-        emptyList()
+
+        kotlinx.coroutines.withTimeoutOrNull(10000L) {
+            try {
+                if (!playlist.serverUrl.isNullOrBlank() && !playlist.username.isNullOrBlank() && !playlist.password.isNullOrBlank()) {
+                    val xtreamItems = fetchXtreamCodesStreams(playlist.serverUrl, playlist.username, playlist.password)
+                    if (xtreamItems.isNotEmpty()) {
+                        saveCachedPlaylistChannels(playlist.id, xtreamItems)
+                        return@withTimeoutOrNull xtreamItems
+                    }
+                    val liveItems = fetchXtreamLiveStreamsOnly(playlist.serverUrl, playlist.username, playlist.password)
+                    if (liveItems.isNotEmpty()) {
+                        saveCachedPlaylistChannels(playlist.id, liveItems)
+                        return@withTimeoutOrNull liveItems
+                    }
+                }
+                if (playlist.url.isNotBlank()) {
+                    val creds = parseXtreamCredentials(playlist.url)
+                    if (creds != null) {
+                        val xtreamFallback = fetchXtreamCodesStreams(creds.first, creds.second, creds.third)
+                        if (xtreamFallback.isNotEmpty()) {
+                            saveCachedPlaylistChannels(playlist.id, xtreamFallback)
+                            return@withTimeoutOrNull xtreamFallback
+                        }
+                        val liveFallback = fetchXtreamLiveStreamsOnly(creds.first, creds.second, creds.third)
+                        if (liveFallback.isNotEmpty()) {
+                            saveCachedPlaylistChannels(playlist.id, liveFallback)
+                            return@withTimeoutOrNull liveFallback
+                        }
+                    }
+                    val m3uItems = parseM3uFromUrl(playlist.url)
+                    if (m3uItems.isNotEmpty()) {
+                        saveCachedPlaylistChannels(playlist.id, m3uItems)
+                        return@withTimeoutOrNull m3uItems
+                    }
+                }
+                null
+            } catch (e: Exception) {
+                e.printStackTrace()
+                null
+            }
+        } ?: cached
     }
 
     // -------------------------------------------------------------
